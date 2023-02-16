@@ -36,9 +36,8 @@ def check_spacy_required_packages(packages: List[str]):
 
     for package_name in packages:
         if not spacy.util.is_package(package_name):
-            log.debug("Spacy model '%s' not found, install with:" % package_name)
-            log.debug(" ".join([sys.executable, "-m", "spacy", "download", package_name]))
-            exit()
+            log.critical("Spacy model '%s' not found, install with:" % package_name)
+            log.critical(" ".join([sys.executable, "-m", "spacy", "download", package_name]))
 
 
 def sanitize_string(input_string: str, sanitize_quotes: bool = False) -> str:
