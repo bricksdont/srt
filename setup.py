@@ -28,7 +28,7 @@ install_requires = get_requirements('requirements.txt')
 
 setup(
     name="srt",
-    version="3.6.0",
+    version="3.6.1",
     python_requires=">=2.7",
     description="A tiny library for parsing, modifying, and composing SRT files.",
     long_description=README,
