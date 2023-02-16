@@ -363,12 +363,12 @@ def main():
 
     install_spacy_required_packages([args.language, spacy_pipeline])
 
-    resegment_subs(subtitles=subtitles,
-                   sanitize_quotes=args.sanitize_quotes,
-                   spacy_pipeline=spacy_pipeline,
-                   spacy_enable_parser=args.spacy_enable_parser)
+    resegmented_subtitles = resegment_subs(subtitles=subtitles,
+                                           sanitize_quotes=args.sanitize_quotes,
+                                           spacy_pipeline=spacy_pipeline,
+                                           spacy_enable_parser=args.spacy_enable_parser)
 
-    output = srt_tools.utils.compose_suggest_on_fail(subtitles, strict=args.strict)
+    output = srt_tools.utils.compose_suggest_on_fail(resegmented_subtitles, strict=args.strict)
 
     try:
         args.output.write(output)
