@@ -8,6 +8,9 @@ import datetime
 import spacy
 import srt
 import re
+import subprocess
+import sys
+import io
 
 from typing import List
 
@@ -29,6 +32,20 @@ SUBTITLES_ARE_ENTIRE_SENTENCES_ALREADY = {"Willkommen zu den FOCUSFIVE News",
 UPPERCASE_TOKENS = ["FOCUSFIVE", "FOCUS", "FIVE", "NEWS"]
 
 SPACY_PIPELINE_TEMPLATE = "%s_core_news_%s"
+
+
+def install_spacy_required_packages(packages: List[str]):
+
+    stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    spacy.cli.validate()
+    spacy_validation_log = sys.stdout.getvalue()
+    sys.stdout = stdout
+
+    for package_name in packages:
+        if not ' ' + package_name + ' ' in spacy_validation_log:
+            log.debug("Spacy model '%s' not found, installing ..." % package_name)
+            subprocess.check_call([sys.executable, "-m", "spacy", "download", package_name])
 
 
 def sanitize_string(input_string: str, sanitize_quotes: bool = False) -> str:
@@ -343,6 +360,8 @@ def main():
     subtitles = list(args.input)  # type: List[srt.Subtitle]
 
     spacy_pipeline = SPACY_PIPELINE_TEMPLATE % (args.language, args.model_size)
+
+    install_spacy_required_packages([args.language, spacy_pipeline])
 
     resegment_subs(subtitles=subtitles,
                    sanitize_quotes=args.sanitize_quotes,
