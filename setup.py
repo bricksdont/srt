@@ -1,15 +1,34 @@
 #!/usr/bin/env python
 
+import os
 import codecs
 
 from setuptools import setup
 
+
+ROOT = os.path.dirname(__file__)
+
+
 with codecs.open("README.rst", encoding="utf8") as readme_f:
     README = readme_f.read()
 
+
+def get_requirements(filename):
+    with open(os.path.join(ROOT, filename)) as f:
+        requirements = []
+
+        for line in f:
+            line = line.rstrip()
+            requirements.append(line)
+
+        return requirements
+
+
+install_requires = get_requirements('requirements.txt')
+
 setup(
     name="srt",
-    version="3.5.2",
+    version="3.6.0",
     python_requires=">=2.7",
     description="A tiny library for parsing, modifying, and composing SRT files.",
     long_description=README,
@@ -30,6 +49,7 @@ setup(
         "srt_tools/srt-resegment",
     ],
     license="MIT",
+    install_requires=install_requires,
     keywords="srt",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
