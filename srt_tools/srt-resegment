@@ -8,9 +8,7 @@ import datetime
 import spacy
 import srt
 import re
-import subprocess
 import sys
-import io
 
 from typing import List
 
@@ -34,18 +32,13 @@ UPPERCASE_TOKENS = ["FOCUSFIVE", "FOCUS", "FIVE", "NEWS"]
 SPACY_PIPELINE_TEMPLATE = "%s_core_news_%s"
 
 
-def install_spacy_required_packages(packages: List[str]):
-
-    stdout = sys.stdout
-    sys.stdout = io.StringIO()
-    spacy.cli.validate()
-    spacy_validation_log = sys.stdout.getvalue()
-    sys.stdout = stdout
+def check_spacy_required_packages(packages: List[str]):
 
     for package_name in packages:
-        if not ' ' + package_name + ' ' in spacy_validation_log:
-            log.debug("Spacy model '%s' not found, installing ..." % package_name)
-            subprocess.check_call([sys.executable, "-m", "spacy", "download", package_name])
+        if not spacy.util.is_package(package_name):
+            log.debug("Spacy model '%s' not found, install with:" % package_name)
+            log.debug(" ".join([sys.executable, "-m", "spacy", "download", package_name]))
+            exit()
 
 
 def sanitize_string(input_string: str, sanitize_quotes: bool = False) -> str:
@@ -361,7 +354,7 @@ def main():
 
     spacy_pipeline = SPACY_PIPELINE_TEMPLATE % (args.language, args.model_size)
 
-    install_spacy_required_packages([args.language, spacy_pipeline])
+    check_spacy_required_packages(packages=[args.language, spacy_pipeline])
 
     resegmented_subtitles = resegment_subs(subtitles=subtitles,
                                            sanitize_quotes=args.sanitize_quotes,
