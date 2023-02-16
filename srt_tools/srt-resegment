@@ -1,0 +1,361 @@
+#!/usr/bin/env python
+
+"""Resegment subtitles to one well-formed sentence per subtitle"""
+
+import srt_tools.utils
+import logging
+import datetime
+import spacy
+import srt
+import re
+
+from typing import List
+
+log = logging.getLogger(__name__)
+
+try:  # Python 2
+    # noinspection PyUnresolvedReferences,PyShadowingBuiltins
+    range = xrange  # pytype: disable=name-error
+except NameError:
+    pass
+
+
+SUBTITLES_ARE_ENTIRE_SENTENCES_ALREADY = {"Willkommen zu den FOCUSFIVE News",
+                                          "Das war’s für FOCUSFIVE NEWS.",
+                                          "Willkommen zu FOCUSFIVE NEWS",
+                                          "Willkommen zu FOCUSNEWS",
+                                          "Willkommen zu FOCUSFIVE News"}
+
+UPPERCASE_TOKENS = ["FOCUSFIVE", "FOCUS", "FIVE", "NEWS"]
+
+SPACY_PIPELINE_TEMPLATE = "%s_core_news_%s"
+
+
+def sanitize_string(input_string: str, sanitize_quotes: bool = False) -> str:
+    """
+    """
+    if sanitize_quotes:
+        input_string = replace_quotes(input_string)
+
+    input_string = input_string.replace("\n", " ")
+    input_string = re.sub(r' +', ' ', input_string)
+    input_string = input_string.strip()
+
+    return input_string
+
+
+def title_case_uppercase_tokens(input_string: str) -> str:
+    """
+    """
+    for token in UPPERCASE_TOKENS:
+        input_string = input_string.replace(token, token.title())
+
+    return input_string
+
+
+def replace_quotes(input_string: str) -> str:
+
+    # replace quotes
+    input_string = input_string.replace("„", '"')
+    input_string = input_string.replace("“", '"')
+
+    return input_string
+
+
+def sanitize_subtitles(subtitles: List[srt.Subtitle], sanitize_quotes: bool = False) -> List[srt.Subtitle]:
+
+    for subtitle in subtitles:
+        subtitle.content = sanitize_string(subtitle.content, sanitize_quotes=sanitize_quotes)
+
+        if subtitle.content == "":
+            log.debug("Skipping empty subtitle: %s" % str(subtitle))
+        else:
+            subtitles.append(subtitle)
+
+    return subtitles
+
+
+def get_fractional_time(subtitle: srt.Subtitle, char_index: int) -> datetime.timedelta:
+
+    num_chars = len(subtitle.content)
+
+    if char_index >= num_chars:
+        raise IndexError("Character index %d out of range for subtitle content: %s" % (char_index, subtitle.content))
+
+    # if this is the last character index, return the end time
+
+    if char_index == num_chars - 1:
+        return subtitle.end
+
+    # otherwise return a fractional time proportional to size of substring until char_index
+    # relative to total number of characters in content
+
+    start_time_seconds = subtitle.start.total_seconds()
+    end_time_seconds = subtitle.end.total_seconds()
+
+    span_seconds = end_time_seconds - start_time_seconds
+
+    fraction = (char_index + 1) / num_chars
+
+    fraction_of_span_seconds = span_seconds * fraction
+
+    fractional_time_seconds = start_time_seconds + fraction_of_span_seconds
+
+    return datetime.timedelta(seconds=fractional_time_seconds)
+
+
+def construct_converted_subtitle(current_string: str,
+                                 current_content: str,
+                                 current_subtitles_collected: List[srt.Subtitle],
+                                 char_index: int,
+                                 original_subtitle: srt.Subtitle,
+                                 subtitle_index: int,
+                                 start_char_index_of_first_collected_subtitle: int,
+                                 last: bool = False) -> srt.Subtitle:
+
+    # gather start and end times from all subtitles collected so far
+
+    if len(current_subtitles_collected) == 0:
+        starting_char_index = char_index - len(current_string)
+        start_time = get_fractional_time(subtitle=original_subtitle, char_index=starting_char_index)
+    else:
+        start_time = get_fractional_time(subtitle=current_subtitles_collected[0],
+                                         char_index=start_char_index_of_first_collected_subtitle)
+
+    if last:
+        # then the end time is the end time of the current subtitle
+        end_time = original_subtitle.end
+    else:
+
+        # if this is after the first test of a new subtitle,
+        # then the end time is the original end time of the previous subtitle, if a
+        # previous one exists
+
+        irrelevant_indexes = abs(len(current_string) - len(current_content))
+        ending_char_index = char_index - irrelevant_indexes
+
+        # noinspection PyChainedComparisons
+        if len(current_subtitles_collected) > 0 and ending_char_index < 0:
+
+            # if the ending character index would need to be lower than zero, this means that the actual
+            # end is the end time of the previous subtitle
+
+            previous_subtitle = current_subtitles_collected[-1]
+            end_time = previous_subtitle.end
+        else:
+            end_time = get_fractional_time(subtitle=original_subtitle, char_index=ending_char_index - 1)
+
+    converted_subtitle = srt.Subtitle(content=current_content,
+                                      start=start_time,
+                                      end=end_time,
+                                      index=subtitle_index)
+
+    return converted_subtitle
+
+
+class Converter:
+
+    def __init__(self, spacy_pipeline: str, spacy_enable_parser: bool = False):
+
+        self.spacy_enable_parser = spacy_enable_parser
+
+        if spacy_enable_parser:
+            disable_components = ["attribute_ruler", "ner", "lemmatizer", "morphologizer"]
+        else:
+            disable_components = ["attribute_ruler", "ner", "lemmatizer", "morphologizer", "parser"]
+
+        self.nlp = spacy.load(spacy_pipeline, disable=disable_components)
+        self.nlp.enable_pipe("senter")
+
+    def get_num_sentences_from_spacy(self, input_string: str) -> int:
+
+        input_string = title_case_uppercase_tokens(input_string)
+
+        return len(list(self.nlp(input_string).sents))
+
+    def convert_subtitles(self, subtitles: List[srt.Subtitle]) -> List[srt.Subtitle]:
+
+        converted_subtitles = []
+
+        current_string = ""
+
+        current_subtitles_collected = []
+
+        start_char_index_of_first_collected_subtitle = 0
+
+        for subtitle_index, subtitle in enumerate(subtitles):
+            content = subtitle.content
+
+            if content in SUBTITLES_ARE_ENTIRE_SENTENCES_ALREADY:
+                # rule-based exception, do not convert at all
+                # simply wrap in a new object to change the index
+
+                converted_subtitle = srt.Subtitle(content=subtitle.content,
+                                                  start=subtitle.start,
+                                                  end=subtitle.end,
+                                                  index=len(converted_subtitles))
+
+                converted_subtitles.append(converted_subtitle)
+
+                continue
+
+            logging.debug("subtitle: %s" % subtitle)
+
+            for char_index, char in enumerate(content):
+
+                # in case this is not the first or last character, if the next character is not a whitespace
+                # assume that checking the number of sentences is not useful yet
+
+                if 0 < char_index < (len(content) - 1):
+                    if char != " ":
+                        current_string += char
+                        continue
+
+                num_sentences = self.get_num_sentences_from_spacy(input_string=current_string + char)
+
+                if num_sentences > 1:
+                    # current_string is one entire sentence
+
+                    current_parts = current_string.split(" ")
+                    relevant_parts = current_parts[:-1]
+                    current_content = " ".join(relevant_parts)
+
+                    # if this alleged sentence is one single character then move on
+                    if len(current_content) == 1:
+                        current_string += char
+                        continue
+
+                    logging.debug("Found sentence: '%s'" % current_content)
+
+                    converted_subtitle = construct_converted_subtitle(current_string=current_string,
+                                                                      current_content=current_content,
+                                                                      current_subtitles_collected=current_subtitles_collected,
+                                                                      char_index=char_index,
+                                                                      original_subtitle=subtitle,
+                                                                      subtitle_index=len(converted_subtitles),
+                                                                      start_char_index_of_first_collected_subtitle=start_char_index_of_first_collected_subtitle,
+                                                                      last=False)
+
+                    converted_subtitles.append(converted_subtitle)
+
+                    # finally, reset current string and remove earlier subtitles from current list
+
+                    current_tokens = current_string.split(" ")  # type: List[str]
+                    current_string = current_tokens[-1] + char
+                    current_subtitles_collected = []
+
+                    # note the current char index in case a fractional time of this substring must be
+                    # retrieved later
+
+                    start_char_index_of_first_collected_subtitle = char_index - len(current_tokens[-1])
+
+                else:
+                    # keep adding to this string until spacy believes the string represents more than 1 sentence
+                    current_string += char
+
+            # add a space at the end of the entire content of this subtitle and then collect this subtitle for later
+            # (is still needed because testing a string that includes the last character of this subtitle's content
+            # will happen in the next iteration)
+
+            current_string += " "
+            current_subtitles_collected.append(subtitle)
+
+        # turn remainders of current_string etc. into the final subtitle
+
+        converted_subtitle = construct_converted_subtitle(current_string=current_string,
+                                                          current_content=current_string,
+                                                          current_subtitles_collected=current_subtitles_collected,
+                                                          char_index=char_index,
+                                                          original_subtitle=subtitle,
+                                                          subtitle_index=len(converted_subtitles),
+                                                          start_char_index_of_first_collected_subtitle=start_char_index_of_first_collected_subtitle,
+                                                          last=True)
+
+        converted_subtitles.append(converted_subtitle)
+
+        return converted_subtitles
+
+
+def resegment_subs(subtitles: List[srt.Subtitle],
+                   sanitize_quotes: bool,
+                   spacy_pipeline: str,
+                   spacy_enable_parser: bool) -> List[srt.Subtitle]:
+
+    converter = Converter(spacy_pipeline=spacy_pipeline, spacy_enable_parser=spacy_enable_parser)
+
+    if sanitize_quotes:
+        subtitles = sanitize_subtitles(subtitles=subtitles, sanitize_quotes=sanitize_quotes)
+
+    converted_subtitles = converter.convert_subtitles(subtitles=subtitles)
+
+    return converted_subtitles
+
+
+def parse_args():
+    examples = {
+        "Resegment German subtitles": "srt resegment -l de -i unsegmented.srt",
+    }
+    parser = srt_tools.utils.basic_parser(
+        description=__doc__,
+        examples=examples,
+    )
+    parser.add_argument(
+        "-l",
+        "--language",
+        metavar="LANGCODE",
+        default="en",
+        type=str,
+        help="Language for sentence segmentation model from Spacy "
+        "(default: en)",
+    )
+    parser.add_argument(
+        "-m",
+        "--model-size",
+        metavar="SIZE",
+        default="sm",
+        choices=["sm", "md", "lg"],
+        type=str,
+        help="Size indicator for sentence segmentation model from Spacy "
+             "(default: sm)",
+    )
+    parser.add_argument(
+        "--spacy-enable-parser",
+        action="store_true",
+        help="Enable parser component in spacy.",
+        required=False
+    )
+    parser.add_argument(
+        "--sanitize-quotes",
+        action="store_true",
+        help="Normalize different kinds of quotes in strings.",
+        required=False
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(level=args.log_level)
+
+    srt_tools.utils.set_basic_args(args)
+
+    subtitles = list(args.input)  # type: List[srt.Subtitle]
+
+    spacy_pipeline = SPACY_PIPELINE_TEMPLATE % (args.language, args.model_size)
+
+    resegment_subs(subtitles=subtitles,
+                   sanitize_quotes=args.sanitize_quotes,
+                   spacy_pipeline=spacy_pipeline,
+                   spacy_enable_parser=args.spacy_enable_parser)
+
+    output = srt_tools.utils.compose_suggest_on_fail(subtitles, strict=args.strict)
+
+    try:
+        args.output.write(output)
+    except (UnicodeEncodeError, TypeError):  # Python 2 fallback
+        args.output.write(output.encode(args.encoding))
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
