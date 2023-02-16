@@ -353,7 +353,7 @@ def main():
 
     spacy_pipeline = SPACY_PIPELINE_TEMPLATE % (args.language, args.model_size)
 
-    check_spacy_required_packages(packages=[args.language, spacy_pipeline])
+    check_spacy_required_packages(packages=[spacy_pipeline])
 
     resegmented_subtitles = resegment_subs(subtitles=subtitles,
                                            sanitize_quotes=args.sanitize_quotes,
