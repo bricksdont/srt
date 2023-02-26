@@ -57,7 +57,12 @@ Utilities
   you can naively strip some basic HTML-like markup with ``srt process -m re -f
   'lambda sub: re.sub("<[^<]+?>", "", sub)'``. HTML-like syntax is especially
   prevalant in `SSA/ASS`_ subtitles that have been directly converted to SRT.
+- *resegment* re-distributes the language content across subtitles so that one
+  subtitle is one well-formed sentence. This tool is language-specific. For
+  example, re-segment German text with ``srt resegment -l de -i unsegmented.srt``.
+  For this tool spacy_ must be installed.
 
 .. _mux: https://en.wikipedia.org/wiki/Multiplexing
 .. _`SSA/ASS`: https://en.wikipedia.org/wiki/SubStation_Alpha
 .. _hanzidentifier: https://github.com/tsroten/hanzidentifier
+.. _spacy: https://spacy.io/
